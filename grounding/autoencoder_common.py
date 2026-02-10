@@ -166,6 +166,258 @@ class NaiveConvAutoencoder(nn.Module):
         return self.decoder(h)
 
 
+class ResNetBasicBlock(nn.Module):
+    expansion = 1
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        stride: int = 1,
+        activation_layer: type[nn.Module] = nn.ReLU,
+        num_groups: int = 8,
+    ) -> None:
+        super().__init__()
+        self.conv1 = nn.Conv2d(
+            in_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=False
+        )
+        self.norm1 = nn.GroupNorm(min(num_groups, out_channels), out_channels)
+        self.act1 = activation_layer()
+        self.conv2 = nn.Conv2d(
+            out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False
+        )
+        self.norm2 = nn.GroupNorm(min(num_groups, out_channels), out_channels)
+        self.act2 = activation_layer()
+
+        if stride != 1 or in_channels != out_channels:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, bias=False),
+                nn.GroupNorm(min(num_groups, out_channels), out_channels),
+            )
+        else:
+            self.shortcut = nn.Identity()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        identity = self.shortcut(x)
+        out = self.conv1(x)
+        out = self.norm1(out)
+        out = self.act1(out)
+        out = self.conv2(out)
+        out = self.norm2(out)
+        out = out + identity
+        out = self.act2(out)
+        return out
+
+
+class ResNetEncoder(nn.Module):
+    def __init__(
+        self,
+        input_channels: int,
+        depth: int,
+        base_channels: int,
+        activation_layer: type[nn.Module] = nn.ReLU,
+        zero_init_residual: bool = True,
+        num_groups: int = 8,
+    ) -> None:
+        super().__init__()
+
+        if (depth - 2) % 6 != 0:
+            raise ValueError("ResNet depth must satisfy depth = 6n + 2 for basic blocks.")
+        blocks_per_stage = (depth - 2) // 6
+        self._num_groups = num_groups
+
+        self.stem = nn.Sequential(
+            nn.Conv2d(input_channels, base_channels, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.GroupNorm(min(num_groups, base_channels), base_channels),
+            activation_layer(),
+        )
+
+        self.in_channels = base_channels
+        self.stage1 = self._make_stage(
+            out_channels=base_channels,
+            num_blocks=blocks_per_stage,
+            stride=1,
+            activation_layer=activation_layer,
+        )
+        self.stage2 = self._make_stage(
+            out_channels=base_channels * 2,
+            num_blocks=blocks_per_stage,
+            stride=2,
+            activation_layer=activation_layer,
+        )
+        self.stage3 = self._make_stage(
+            out_channels=base_channels * 4,
+            num_blocks=blocks_per_stage,
+            stride=2,
+            activation_layer=activation_layer,
+        )
+
+        self.out_channels = base_channels * 4
+
+        self._init_weights()
+        if zero_init_residual:
+            for m in self.modules():
+                if isinstance(m, ResNetBasicBlock):
+                    nn.init.constant_(m.norm2.weight, 0.0)
+
+    def _make_stage(
+        self,
+        out_channels: int,
+        num_blocks: int,
+        stride: int,
+        activation_layer: type[nn.Module],
+    ) -> nn.Sequential:
+        layers: list[nn.Module] = []
+        layers.append(
+            ResNetBasicBlock(
+                in_channels=self.in_channels,
+                out_channels=out_channels,
+                stride=stride,
+                activation_layer=activation_layer,
+                num_groups=self._num_groups,
+            )
+        )
+        self.in_channels = out_channels
+
+        for _ in range(1, num_blocks):
+            layers.append(
+                ResNetBasicBlock(
+                    in_channels=self.in_channels,
+                    out_channels=out_channels,
+                    stride=1,
+                    activation_layer=activation_layer,
+                    num_groups=self._num_groups,
+                )
+            )
+        return nn.Sequential(*layers)
+
+    def _init_weights(self) -> None:
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+            elif isinstance(m, nn.GroupNorm):
+                nn.init.constant_(m.weight, 1.0)
+                nn.init.constant_(m.bias, 0.0)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.stem(x)
+        x = self.stage1(x)
+        x = self.stage2(x)
+        x = self.stage3(x)
+        return x
+
+
+class AsymmetricResNetAutoencoder(nn.Module):
+    def __init__(
+        self,
+        input_channels: int,
+        input_size: int,
+        hidden_dims: list[int],
+        latent_dim: int,
+        activation_name: str,
+        kernel_size: int,
+        stride: int,
+        padding: int,
+        output_padding: int,
+        resnet_depth: int,
+        resnet_base_channels: int,
+        dropout_p: float = 0.0,
+        zero_init_residual: bool = True,
+        num_groups: int = 8,
+    ) -> None:
+        super().__init__()
+        if not hidden_dims:
+            raise ValueError(
+                "model.hidden_dims must contain at least one channel size for asymmetric_resnet."
+            )
+
+        activation_map = {
+            "relu": nn.ReLU,
+            "gelu": nn.GELU,
+            "tanh": nn.Tanh,
+        }
+        if activation_name not in activation_map:
+            raise ValueError(
+                f"Unsupported activation '{activation_name}'. "
+                f"Expected one of: {sorted(activation_map)}"
+            )
+        activation = activation_map[activation_name]
+
+        self.encoder = ResNetEncoder(
+            input_channels=input_channels,
+            depth=resnet_depth,
+            base_channels=resnet_base_channels,
+            activation_layer=activation,
+            zero_init_residual=zero_init_residual,
+            num_groups=num_groups,
+        )
+
+        decoder_in_channels = hidden_dims[-1]
+        self.encoder_projection = nn.Sequential(
+            nn.Conv2d(self.encoder.out_channels, decoder_in_channels, kernel_size=1, bias=False),
+            nn.GroupNorm(min(num_groups, decoder_in_channels), decoder_in_channels),
+            activation(),
+        )
+
+        with torch.no_grad():
+            dummy = torch.zeros(1, input_channels, input_size, input_size)
+            feature_map = self.encoder_projection(self.encoder(dummy))
+        self._feature_shape = feature_map.shape[1:]
+        flat_dim = int(np.prod(self._feature_shape))
+
+        self.to_latent = nn.Linear(flat_dim, latent_dim)
+        self.from_latent = nn.Linear(latent_dim, flat_dim)
+
+        decoder_layers: list[nn.Module] = []
+        decoder_channels = list(reversed(hidden_dims))
+        for i in range(len(decoder_channels) - 1):
+            decoder_layers.append(
+                nn.ConvTranspose2d(
+                    decoder_channels[i],
+                    decoder_channels[i + 1],
+                    kernel_size=kernel_size,
+                    stride=stride,
+                    padding=padding,
+                    output_padding=output_padding,
+                )
+            )
+            decoder_layers.append(activation())
+            if dropout_p > 0.0:
+                decoder_layers.append(nn.Dropout2d(p=dropout_p))
+        decoder_layers.append(
+            nn.ConvTranspose2d(
+                decoder_channels[-1],
+                input_channels,
+                kernel_size=kernel_size,
+                stride=stride,
+                padding=padding,
+                output_padding=output_padding,
+            )
+        )
+        decoder_layers.append(nn.Sigmoid())
+        self.decoder = nn.Sequential(*decoder_layers)
+
+        self._init_linear_weights()
+
+    def _init_linear_weights(self) -> None:
+        nn.init.kaiming_uniform_(self.to_latent.weight, a=np.sqrt(5))
+        nn.init.zeros_(self.to_latent.bias)
+        nn.init.kaiming_uniform_(self.from_latent.weight, a=np.sqrt(5))
+        nn.init.zeros_(self.from_latent.bias)
+
+    def encode(self, x: torch.Tensor) -> torch.Tensor:
+        h = self.encoder(x)
+        h = self.encoder_projection(h)
+        h = h.view(h.size(0), -1)
+        return self.to_latent(h)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        z = self.encode(x)
+        h = self.from_latent(z)
+        h = h.view(h.size(0), *self._feature_shape)
+        return self.decoder(h)
+
+
 def build_model_from_config(cfg: dict[str, Any]) -> nn.Module:
     model_cfg = cfg["model"]
     reg_cfg = cfg.get("regularization", {})
@@ -184,6 +436,24 @@ def build_model_from_config(cfg: dict[str, Any]) -> nn.Module:
             padding=int(model_cfg.get("padding", 1)),
             output_padding=int(model_cfg.get("output_padding", 1)),
             dropout_p=dropout_p,
+        )
+    if architecture == "asymmetric_resnet":
+        encoder_cfg = model_cfg.get("encoder", {})
+        return AsymmetricResNetAutoencoder(
+            input_channels=int(model_cfg.get("input_channels", 1)),
+            input_size=int(model_cfg.get("input_size", 28)),
+            hidden_dims=[int(v) for v in model_cfg["hidden_dims"]],
+            latent_dim=int(model_cfg["latent_dim"]),
+            activation_name=str(model_cfg.get("activation", "relu")).lower(),
+            kernel_size=int(model_cfg.get("kernel_size", 3)),
+            stride=int(model_cfg.get("stride", 2)),
+            padding=int(model_cfg.get("padding", 1)),
+            output_padding=int(model_cfg.get("output_padding", 1)),
+            resnet_depth=int(encoder_cfg.get("resnet_depth", 8)),
+            resnet_base_channels=int(encoder_cfg.get("base_channels", 16)),
+            dropout_p=dropout_p,
+            zero_init_residual=bool(encoder_cfg.get("zero_init_residual", True)),
+            num_groups=int(encoder_cfg.get("num_groups", 8)),
         )
     if architecture == "vanilla_fc":
         return VanillaAutoencoder(
