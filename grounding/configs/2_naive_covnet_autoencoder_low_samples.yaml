@@ -5,7 +5,7 @@ experiment:
 data:
   dataset: mnist
   data_dir: ./data
-  train_samples: 100
+  train_samples: 1000
   val_samples: 5000
   test_samples: 10000
   num_workers: 0
@@ -24,7 +24,7 @@ model:
 
 training:
   batch_size: 128
-  epochs: 15
+  epochs: 30
   learning_rate: 0.001
   weight_decay: 0.0
   device: auto
@@ -36,3 +36,15 @@ output:
 analysis:
   k: 5
   metric: euclidean
+
+regularization:
+  dropout:
+    enabled: false
+    p: 0.0
+  denoising:
+    enabled: false
+    gaussian_std: 0.0
+    masking_prob: 0.0
+    apply_in_eval: false
+    clamp_min: 0.0
+    clamp_max: 1.0

@@ -1,11 +1,11 @@
 experiment:
-  name: naive_covnet_autoencoder
+  name: denoising_covnet
   seed: 42
 
 data:
   dataset: mnist
   data_dir: ./data
-  train_samples: 55000
+  train_samples: 1000
   val_samples: 5000
   test_samples: 10000
   num_workers: 0
@@ -24,27 +24,27 @@ model:
 
 training:
   batch_size: 128
-  epochs: 15
+  epochs: 30
   learning_rate: 0.001
   weight_decay: 0.0
   device: auto
 
-output:
-  checkpoint_path: ./artifacts/1_naive_covnet_autoencoder.pt
-  analysis_path: ./artifacts/1_naive_covnet_autoencoder_analysis.txt
-
-analysis:
-  k: 5
-  metric: euclidean
-
 regularization:
   dropout:
-    enabled: false
-    p: 0.0
+    enabled: true
+    p: 0.2
   denoising:
     enabled: false
-    gaussian_std: 0.0
+    gaussian_std: 0.1
     masking_prob: 0.0
     apply_in_eval: false
     clamp_min: 0.0
     clamp_max: 1.0
+
+output:
+  checkpoint_path: ./artifacts/3_regularized_covnet.pt
+  analysis_path: ./artifacts/3_regularized_covnet_analysis.txt
+
+analysis:
+  k: 5
+  metric: euclidean

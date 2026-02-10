@@ -31,3 +31,15 @@ output:
 analysis:
   k: 5
   metric: euclidean
+
+regularization:
+  dropout:
+    enabled: false
+    p: 0.0
+  denoising:
+    enabled: false
+    gaussian_std: 0.0
+    masking_prob: 0.0
+    apply_in_eval: false
+    clamp_min: 0.0
+    clamp_max: 1.0

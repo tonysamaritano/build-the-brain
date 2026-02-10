@@ -26,6 +26,7 @@ class VanillaAutoencoder(nn.Module):
         hidden_dims: list[int],
         latent_dim: int,
         activation_name: str,
+        dropout_p: float = 0.0,
     ) -> None:
         super().__init__()
 
@@ -45,6 +46,8 @@ class VanillaAutoencoder(nn.Module):
         prev_dim = input_dim
         for dim in hidden_dims:
             encoder_layers.extend([nn.Linear(prev_dim, dim), activation()])
+            if dropout_p > 0.0:
+                encoder_layers.append(nn.Dropout(p=dropout_p))
             prev_dim = dim
         encoder_layers.append(nn.Linear(prev_dim, latent_dim))
         self.encoder = nn.Sequential(*encoder_layers)
@@ -53,6 +56,8 @@ class VanillaAutoencoder(nn.Module):
         prev_dim = latent_dim
         for dim in reversed(hidden_dims):
             decoder_layers.extend([nn.Linear(prev_dim, dim), activation()])
+            if dropout_p > 0.0:
+                decoder_layers.append(nn.Dropout(p=dropout_p))
             prev_dim = dim
         decoder_layers.extend([nn.Linear(prev_dim, input_dim), nn.Sigmoid()])
         self.decoder = nn.Sequential(*decoder_layers)
@@ -79,6 +84,7 @@ class NaiveConvAutoencoder(nn.Module):
         stride: int,
         padding: int,
         output_padding: int,
+        dropout_p: float = 0.0,
     ) -> None:
         super().__init__()
         if not hidden_dims:
@@ -103,6 +109,8 @@ class NaiveConvAutoencoder(nn.Module):
                 nn.Conv2d(in_ch, ch, kernel_size=kernel_size, stride=stride, padding=padding)
             )
             encoder_layers.append(activation())
+            if dropout_p > 0.0:
+                encoder_layers.append(nn.Dropout2d(p=dropout_p))
             in_ch = ch
         self.features = nn.Sequential(*encoder_layers)
 
@@ -129,6 +137,8 @@ class NaiveConvAutoencoder(nn.Module):
                 )
             )
             decoder_layers.append(activation())
+            if dropout_p > 0.0:
+                decoder_layers.append(nn.Dropout2d(p=dropout_p))
         decoder_layers.append(
             nn.ConvTranspose2d(
                 decoder_channels[-1],
@@ -156,6 +166,9 @@ class NaiveConvAutoencoder(nn.Module):
 
 def build_model_from_config(cfg: dict[str, Any]) -> nn.Module:
     model_cfg = cfg["model"]
+    reg_cfg = cfg.get("regularization", {})
+    dropout_cfg = reg_cfg.get("dropout", {})
+    dropout_p = float(dropout_cfg.get("p", 0.0)) if bool(dropout_cfg.get("enabled", False)) else 0.0
     architecture = str(model_cfg.get("architecture", "vanilla_fc")).lower()
     if architecture == "naive_conv":
         return NaiveConvAutoencoder(
@@ -168,6 +181,7 @@ def build_model_from_config(cfg: dict[str, Any]) -> nn.Module:
             stride=int(model_cfg.get("stride", 2)),
             padding=int(model_cfg.get("padding", 1)),
             output_padding=int(model_cfg.get("output_padding", 1)),
+            dropout_p=dropout_p,
         )
     if architecture == "vanilla_fc":
         return VanillaAutoencoder(
@@ -175,6 +189,7 @@ def build_model_from_config(cfg: dict[str, Any]) -> nn.Module:
             hidden_dims=[int(v) for v in model_cfg["hidden_dims"]],
             latent_dim=int(model_cfg["latent_dim"]),
             activation_name=str(model_cfg["activation"]).lower(),
+            dropout_p=dropout_p,
         )
     raise ValueError(f"Unsupported model.architecture='{architecture}'")
 
@@ -250,3 +265,26 @@ def build_mnist_splits(cfg: dict[str, Any]) -> DatasetSplits:
         test_subset = Subset(full_test, list(range(requested_test)))
 
     return DatasetSplits(train=train_subset, val=val_subset, test=test_subset)
+
+
+def apply_denoising_noise(images: torch.Tensor, cfg: dict[str, Any]) -> torch.Tensor:
+    reg_cfg = cfg.get("regularization", {})
+    denoise_cfg = reg_cfg.get("denoising", {})
+    if not bool(denoise_cfg.get("enabled", False)):
+        return images
+
+    out = images
+
+    gaussian_std = float(denoise_cfg.get("gaussian_std", 0.0))
+    if gaussian_std > 0.0:
+        out = out + gaussian_std * torch.randn_like(out)
+
+    masking_prob = float(denoise_cfg.get("masking_prob", 0.0))
+    if masking_prob > 0.0:
+        keep_mask = torch.rand_like(out).gt(masking_prob)
+        out = out * keep_mask
+
+    clamp_min = float(denoise_cfg.get("clamp_min", 0.0))
+    clamp_max = float(denoise_cfg.get("clamp_max", 1.0))
+    out = torch.clamp(out, min=clamp_min, max=clamp_max)
+    return out
