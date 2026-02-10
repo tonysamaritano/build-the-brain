@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
 from autoencoder_common import (
-    VanillaAutoencoder,
+    build_model_from_config,
     build_mnist_splits,
     resolve_device,
     resolve_num_workers,
@@ -78,13 +78,7 @@ def main() -> None:
         pin_memory=(device.type == "cuda"),
     )
 
-    model_cfg = cfg["model"]
-    model = VanillaAutoencoder(
-        input_dim=int(model_cfg["input_dim"]),
-        hidden_dims=[int(v) for v in model_cfg["hidden_dims"]],
-        latent_dim=int(model_cfg["latent_dim"]),
-        activation_name=str(model_cfg["activation"]).lower(),
-    ).to(device)
+    model = build_model_from_config(cfg).to(device)
 
     criterion = nn.MSELoss()
     optimizer = optim.Adam(
@@ -95,6 +89,9 @@ def main() -> None:
 
     epochs = int(cfg["training"]["epochs"])
     best_val_loss = float("inf")
+    output_cfg = cfg["output"]
+    ckpt_path = Path(output_cfg["checkpoint_path"])
+    ckpt_path.parent.mkdir(parents=True, exist_ok=True)
 
     for epoch in tqdm(range(1, epochs + 1), desc="epochs"):
         model.train()
@@ -123,20 +120,15 @@ def main() -> None:
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-
-    output_cfg = cfg["output"]
-    ckpt_path = Path(output_cfg["checkpoint_path"])
-    ckpt_path.parent.mkdir(parents=True, exist_ok=True)
-
-    torch.save(
-        {
-            "state_dict": model.state_dict(),
-            "config": cfg,
-            "best_val_loss": best_val_loss,
-        },
-        ckpt_path,
-    )
-    print(f"Saved checkpoint to {ckpt_path}")
+            torch.save(
+                {
+                    "state_dict": model.state_dict(),
+                    "config": cfg,
+                    "best_val_loss": best_val_loss,
+                },
+                ckpt_path,
+            )
+            print(f"Saved best checkpoint to {ckpt_path} (val_loss={best_val_loss:.6f})")
 
 
 if __name__ == "__main__":

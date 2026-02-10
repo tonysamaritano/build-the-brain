@@ -96,6 +96,9 @@ def main() -> None:
 
     epochs = int(cfg["training"]["epochs"])
     best_val_loss = float("inf")
+    output_cfg = cfg["output"]
+    ckpt_path = Path(output_cfg["checkpoint_path"])
+    ckpt_path.parent.mkdir(parents=True, exist_ok=True)
 
     for epoch in tqdm(range(1, epochs + 1), desc="epochs"):
         model.train()
@@ -125,20 +128,15 @@ def main() -> None:
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-
-    output_cfg = cfg["output"]
-    ckpt_path = Path(output_cfg["checkpoint_path"])
-    ckpt_path.parent.mkdir(parents=True, exist_ok=True)
-
-    torch.save(
-        {
-            "state_dict": model.state_dict(),
-            "config": cfg,
-            "best_val_loss": best_val_loss,
-        },
-        ckpt_path,
-    )
-    print(f"Saved checkpoint to {ckpt_path}")
+            torch.save(
+                {
+                    "state_dict": model.state_dict(),
+                    "config": cfg,
+                    "best_val_loss": best_val_loss,
+                },
+                ckpt_path,
+            )
+            print(f"Saved best checkpoint to {ckpt_path} (val_loss={best_val_loss:.6f})")
 
 
 if __name__ == "__main__":

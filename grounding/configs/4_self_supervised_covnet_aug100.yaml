@@ -1,5 +1,5 @@
 experiment:
-  name: self_supervised_covnet_aug30
+  name: self_supervised_covnet_aug100
   seed: 42
 
 data:
@@ -36,8 +36,9 @@ regularization:
 
 self_supervised:
   enabled: true
-  precompute: true
-  augmentations_per_sample: 30
+  precompute: false
+  refresh_each_epoch: true
+  augmentations_per_sample: 100
   cache_path: ./artifacts/4_self_supervised_covnet_aug30_train_cache.pt
   augmentations:
     translation:
@@ -60,8 +61,8 @@ self_supervised:
     clamp_max: 1.0
 
 output:
-  checkpoint_path: ./artifacts/4_self_supervised_covnet_aug30.pt
-  analysis_path: ./artifacts/4_self_supervised_covnet_aug30_analysis.txt
+  checkpoint_path: ./artifacts/4_self_supervised_covnet_aug100.pt
+  analysis_path: ./artifacts/4_self_supervised_covnet_aug100_analysis.txt
 
 analysis:
   k: 5

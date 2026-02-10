@@ -29,7 +29,7 @@ def load_config(path: str) -> dict[str, Any]:
 
 def load_model(cfg: dict[str, Any], checkpoint_path: str, device: torch.device) -> torch.nn.Module:
     model = build_model_from_config(cfg).to(device)
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
     model.load_state_dict(checkpoint["state_dict"])
     model.eval()
     return model

@@ -45,6 +45,7 @@ regularization:
 self_supervised:
   enabled: false
   precompute: true
+  refresh_each_epoch: false
   augmentations_per_sample: 1
   cache_path: ""
   augmentations:

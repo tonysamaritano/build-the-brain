@@ -33,7 +33,7 @@ def reconstruction_target(images: torch.Tensor, recon: torch.Tensor) -> torch.Te
     return images
 
 
-def evaluate(model: nn.Module, loader: DataLoader, device: torch.device, criterion: nn.Module, cfg: dict[str, Any]) -> float:
+def evaluate(model: nn.Module, loader: DataLoader, device: torch.device, criterion: nn.Module) -> float:
     model.eval()
     running = 0.0
     total = 0
@@ -49,7 +49,7 @@ def evaluate(model: nn.Module, loader: DataLoader, device: torch.device, criteri
     return running / max(total, 1)
 
 
-def build_self_supervised_train_dataset(train_subset: Any, cfg: dict[str, Any]) -> TensorDataset:
+def build_self_supervised_train_dataset(train_subset: Any, cfg: dict[str, Any], use_cache: bool = True) -> TensorDataset:
     ssl_cfg = cfg.get("self_supervised", {})
     n_aug = int(ssl_cfg.get("augmentations_per_sample", 1))
     if n_aug < 1:
@@ -59,8 +59,8 @@ def build_self_supervised_train_dataset(train_subset: Any, cfg: dict[str, Any]) 
     cache_path_str = ssl_cfg.get("cache_path", "")
     cache_path = Path(cache_path_str) if cache_path_str else None
 
-    if precompute and cache_path and cache_path.exists():
-        payload = torch.load(cache_path, map_location="cpu")
+    if use_cache and precompute and cache_path and cache_path.exists():
+        payload = torch.load(cache_path, map_location="cpu", weights_only=True)
         print(f"Loaded precomputed augmented dataset from {cache_path}")
         return TensorDataset(payload["inputs"], payload["targets"])
 
@@ -81,7 +81,7 @@ def build_self_supervised_train_dataset(train_subset: Any, cfg: dict[str, Any]) 
         f"augmentations_per_sample={n_aug} total={inputs.size(0)}"
     )
 
-    if precompute and cache_path:
+    if use_cache and precompute and cache_path:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         torch.save({"inputs": inputs, "targets": targets}, cache_path)
         print(f"Saved precomputed augmented dataset to {cache_path}")
@@ -119,6 +119,7 @@ def main() -> None:
     print(f"DataLoader workers: requested={requested_num_workers}, effective={num_workers}")
 
     ssl_enabled = bool(ssl_cfg.get("enabled", False))
+    ssl_refresh_each_epoch = bool(ssl_cfg.get("refresh_each_epoch", False))
     if ssl_enabled:
         train_dataset = build_self_supervised_train_dataset(splits.train, cfg)
     else:
@@ -150,8 +151,21 @@ def main() -> None:
 
     epochs = int(cfg["training"]["epochs"])
     best_val_loss = float("inf")
+    output_cfg = cfg["output"]
+    ckpt_path = Path(output_cfg["checkpoint_path"])
+    ckpt_path.parent.mkdir(parents=True, exist_ok=True)
 
     for epoch in tqdm(range(1, epochs + 1), desc="epochs"):
+        if ssl_enabled and ssl_refresh_each_epoch:
+            train_dataset = build_self_supervised_train_dataset(splits.train, cfg, use_cache=False)
+            train_loader = DataLoader(
+                train_dataset,
+                batch_size=batch_size,
+                shuffle=True,
+                num_workers=num_workers,
+                pin_memory=(device.type == "cuda"),
+            )
+
         model.train()
         running = 0.0
         total = 0
@@ -176,7 +190,7 @@ def main() -> None:
             total += batch_size_now
 
         train_loss = running / max(total, 1)
-        val_loss = evaluate(model, val_loader, device, criterion, cfg)
+        val_loss = evaluate(model, val_loader, device, criterion)
 
         print(
             f"epoch={epoch:03d} train_loss={train_loss:.6f} val_loss={val_loss:.6f}",
@@ -185,20 +199,15 @@ def main() -> None:
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-
-    output_cfg = cfg["output"]
-    ckpt_path = Path(output_cfg["checkpoint_path"])
-    ckpt_path.parent.mkdir(parents=True, exist_ok=True)
-
-    torch.save(
-        {
-            "state_dict": model.state_dict(),
-            "config": cfg,
-            "best_val_loss": best_val_loss,
-        },
-        ckpt_path,
-    )
-    print(f"Saved checkpoint to {ckpt_path}")
+            torch.save(
+                {
+                    "state_dict": model.state_dict(),
+                    "config": cfg,
+                    "best_val_loss": best_val_loss,
+                },
+                ckpt_path,
+            )
+            print(f"Saved best checkpoint to {ckpt_path} (val_loss={best_val_loss:.6f})")
 
 
 if __name__ == "__main__":
