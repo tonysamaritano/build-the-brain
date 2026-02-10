@@ -150,7 +150,6 @@ def main() -> None:
     )
 
     epochs = int(cfg["training"]["epochs"])
-    best_val_loss = float("inf")
     output_cfg = cfg["output"]
     ckpt_path = Path(output_cfg["checkpoint_path"])
     ckpt_path.parent.mkdir(parents=True, exist_ok=True)
@@ -197,17 +196,17 @@ def main() -> None:
             flush=True,
         )
 
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            torch.save(
-                {
-                    "state_dict": model.state_dict(),
-                    "config": cfg,
-                    "best_val_loss": best_val_loss,
-                },
-                ckpt_path,
-            )
-            print(f"Saved best checkpoint to {ckpt_path} (val_loss={best_val_loss:.6f})")
+        epoch_ckpt_path = ckpt_path.with_name(f"{ckpt_path.stem}_epoch{epoch:03d}{ckpt_path.suffix}")
+        payload = {
+            "state_dict": model.state_dict(),
+            "config": cfg,
+            "epoch": epoch,
+            "train_loss": train_loss,
+            "val_loss": val_loss,
+        }
+        torch.save(payload, epoch_ckpt_path)
+        torch.save(payload, ckpt_path)
+        print(f"Saved checkpoint: {epoch_ckpt_path}")
 
 
 if __name__ == "__main__":
