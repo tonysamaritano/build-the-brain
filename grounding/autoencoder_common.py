@@ -10,6 +10,8 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Subset, random_split
 from torchvision import datasets, transforms
+from torchvision.transforms import InterpolationMode
+from torchvision.transforms import functional as TF
 
 
 @dataclass
@@ -267,24 +269,68 @@ def build_mnist_splits(cfg: dict[str, Any]) -> DatasetSplits:
     return DatasetSplits(train=train_subset, val=val_subset, test=test_subset)
 
 
-def apply_denoising_noise(images: torch.Tensor, cfg: dict[str, Any]) -> torch.Tensor:
-    reg_cfg = cfg.get("regularization", {})
-    denoise_cfg = reg_cfg.get("denoising", {})
-    if not bool(denoise_cfg.get("enabled", False)):
+def apply_ssl_augmentations(images: torch.Tensor, cfg: dict[str, Any]) -> torch.Tensor:
+    ssl_cfg = cfg.get("self_supervised", {})
+    if not bool(ssl_cfg.get("enabled", False)):
         return images
 
-    out = images
+    aug_cfg = ssl_cfg.get("augmentations", {})
+    out = images.clone()
 
-    gaussian_std = float(denoise_cfg.get("gaussian_std", 0.0))
-    if gaussian_std > 0.0:
-        out = out + gaussian_std * torch.randn_like(out)
+    trans_cfg = aug_cfg.get("translation", {})
+    rot_cfg = aug_cfg.get("rotation", {})
+    inten_cfg = aug_cfg.get("intensity", {})
 
-    masking_prob = float(denoise_cfg.get("masking_prob", 0.0))
-    if masking_prob > 0.0:
+    for i in range(out.size(0)):
+        img = out[i]
+
+        if bool(trans_cfg.get("enabled", False)):
+            max_shift = int(trans_cfg.get("max_shift", 0))
+            if max_shift > 0:
+                dx = int(torch.randint(-max_shift, max_shift + 1, (1,)).item())
+                dy = int(torch.randint(-max_shift, max_shift + 1, (1,)).item())
+                img = TF.affine(
+                    img,
+                    angle=0.0,
+                    translate=[dx, dy],
+                    scale=1.0,
+                    shear=[0.0, 0.0],
+                    interpolation=InterpolationMode.BILINEAR,
+                    fill=0.0,
+                )
+
+        if bool(rot_cfg.get("enabled", False)):
+            max_degrees = float(rot_cfg.get("max_degrees", 0.0))
+            if max_degrees > 0.0:
+                angle = float((torch.rand(1).item() * 2.0 - 1.0) * max_degrees)
+                img = TF.rotate(
+                    img,
+                    angle=angle,
+                    interpolation=InterpolationMode.BILINEAR,
+                    fill=0.0,
+                )
+
+        if bool(inten_cfg.get("enabled", False)):
+            min_scale = float(inten_cfg.get("min_scale", 1.0))
+            max_scale = float(inten_cfg.get("max_scale", 1.0))
+            if max_scale > 0 and max_scale >= min_scale:
+                scale = float(torch.empty(1).uniform_(min_scale, max_scale).item())
+                img = img * scale
+
+        out[i] = img
+
+    noise_cfg = aug_cfg.get("noise", {})
+    noise_std = float(noise_cfg.get("std", 0.0))
+    if bool(noise_cfg.get("enabled", False)) and noise_std > 0.0:
+        out = out + noise_std * torch.randn_like(out)
+
+    mask_cfg = aug_cfg.get("masking", {})
+    masking_prob = float(mask_cfg.get("prob", 0.0))
+    if bool(mask_cfg.get("enabled", False)) and masking_prob > 0.0:
         keep_mask = torch.rand_like(out).gt(masking_prob)
         out = out * keep_mask
 
-    clamp_min = float(denoise_cfg.get("clamp_min", 0.0))
-    clamp_max = float(denoise_cfg.get("clamp_max", 1.0))
+    clamp_min = float(aug_cfg.get("clamp_min", 0.0))
+    clamp_max = float(aug_cfg.get("clamp_max", 1.0))
     out = torch.clamp(out, min=clamp_min, max=clamp_max)
     return out

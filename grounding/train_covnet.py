@@ -8,11 +8,11 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import yaml
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, TensorDataset
 from tqdm.auto import tqdm
 
 from autoencoder_common import (
-    apply_denoising_noise,
+    apply_ssl_augmentations,
     build_mnist_splits,
     build_model_from_config,
     resolve_device,
@@ -37,18 +37,56 @@ def evaluate(model: nn.Module, loader: DataLoader, device: torch.device, criteri
     model.eval()
     running = 0.0
     total = 0
-    denoise_in_eval = bool(cfg.get("regularization", {}).get("denoising", {}).get("apply_in_eval", False))
     with torch.no_grad():
         for images, _ in tqdm(loader, desc="val", leave=False):
             images = images.to(device)
-            inputs = apply_denoising_noise(images, cfg) if denoise_in_eval else images
-            recon = model(inputs)
+            recon = model(images)
             target = reconstruction_target(images, recon)
             loss = criterion(recon, target)
             batch_size = images.size(0)
             running += loss.item() * batch_size
             total += batch_size
     return running / max(total, 1)
+
+
+def build_self_supervised_train_dataset(train_subset: Any, cfg: dict[str, Any]) -> TensorDataset:
+    ssl_cfg = cfg.get("self_supervised", {})
+    n_aug = int(ssl_cfg.get("augmentations_per_sample", 1))
+    if n_aug < 1:
+        raise ValueError("self_supervised.augmentations_per_sample must be >= 1")
+
+    precompute = bool(ssl_cfg.get("precompute", True))
+    cache_path_str = ssl_cfg.get("cache_path", "")
+    cache_path = Path(cache_path_str) if cache_path_str else None
+
+    if precompute and cache_path and cache_path.exists():
+        payload = torch.load(cache_path, map_location="cpu")
+        print(f"Loaded precomputed augmented dataset from {cache_path}")
+        return TensorDataset(payload["inputs"], payload["targets"])
+
+    aug_batches: list[torch.Tensor] = []
+    target_batches: list[torch.Tensor] = []
+    for idx in tqdm(range(len(train_subset)), desc="precompute ssl", leave=False):
+        image, _ = train_subset[idx]
+        clean = image.unsqueeze(0)
+        clean_batch = clean.repeat(n_aug, 1, 1, 1)
+        augmented_batch = apply_ssl_augmentations(clean_batch, cfg)
+        aug_batches.append(augmented_batch)
+        target_batches.append(clean_batch)
+
+    inputs = torch.cat(aug_batches, dim=0)
+    targets = torch.cat(target_batches, dim=0)
+    print(
+        f"Precomputed SSL samples: base={len(train_subset)} "
+        f"augmentations_per_sample={n_aug} total={inputs.size(0)}"
+    )
+
+    if precompute and cache_path:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save({"inputs": inputs, "targets": targets}, cache_path)
+        print(f"Saved precomputed augmented dataset to {cache_path}")
+
+    return TensorDataset(inputs, targets)
 
 
 def main() -> None:
@@ -68,12 +106,11 @@ def main() -> None:
     splits = build_mnist_splits(cfg)
     print(f"Using device: {device}")
 
-    denoise_cfg = cfg.get("regularization", {}).get("denoising", {})
+    ssl_cfg = cfg.get("self_supervised", {})
     print(
-        "Denoising: "
-        f"enabled={bool(denoise_cfg.get('enabled', False))} "
-        f"gaussian_std={float(denoise_cfg.get('gaussian_std', 0.0))} "
-        f"masking_prob={float(denoise_cfg.get('masking_prob', 0.0))}"
+        "Self-supervised augmentations: "
+        f"enabled={bool(ssl_cfg.get('enabled', False))} "
+        f"augmentations_per_sample={int(ssl_cfg.get('augmentations_per_sample', 1))}"
     )
 
     batch_size = int(cfg["training"]["batch_size"])
@@ -81,8 +118,14 @@ def main() -> None:
     num_workers = resolve_num_workers(requested_num_workers)
     print(f"DataLoader workers: requested={requested_num_workers}, effective={num_workers}")
 
+    ssl_enabled = bool(ssl_cfg.get("enabled", False))
+    if ssl_enabled:
+        train_dataset = build_self_supervised_train_dataset(splits.train, cfg)
+    else:
+        train_dataset = splits.train
+
     train_loader = DataLoader(
-        splits.train,
+        train_dataset,
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
@@ -113,18 +156,22 @@ def main() -> None:
         running = 0.0
         total = 0
 
-        for images, _ in tqdm(train_loader, desc=f"train e{epoch:03d}", leave=False):
-            images = images.to(device)
-            noisy_inputs = apply_denoising_noise(images, cfg)
+        for batch_a, batch_b in tqdm(train_loader, desc=f"train e{epoch:03d}", leave=False):
+            if ssl_enabled:
+                inputs = batch_a.to(device)
+                clean_targets = batch_b.to(device)
+            else:
+                inputs = batch_a.to(device)
+                clean_targets = inputs
 
             optimizer.zero_grad()
-            recon = model(noisy_inputs)
-            target = reconstruction_target(images, recon)
+            recon = model(inputs)
+            target = reconstruction_target(clean_targets, recon)
             loss = criterion(recon, target)
             loss.backward()
             optimizer.step()
 
-            batch_size_now = images.size(0)
+            batch_size_now = inputs.size(0)
             running += loss.item() * batch_size_now
             total += batch_size_now
 

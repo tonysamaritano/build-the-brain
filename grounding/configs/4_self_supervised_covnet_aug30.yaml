@@ -1,5 +1,5 @@
 experiment:
-  name: regularized_covnet
+  name: self_supervised_covnet_aug30
   seed: 42
 
 data:
@@ -31,37 +31,37 @@ training:
 
 regularization:
   dropout:
-    enabled: true
+    enabled: false
     p: 0.2
 
 self_supervised:
-  enabled: false
+  enabled: true
   precompute: true
-  augmentations_per_sample: 1
-  cache_path: ""
+  augmentations_per_sample: 30
+  cache_path: ./artifacts/4_self_supervised_covnet_aug30_train_cache.pt
   augmentations:
     translation:
-      enabled: false
-      max_shift: 0
+      enabled: true
+      max_shift: 2
     rotation:
-      enabled: false
-      max_degrees: 0.0
+      enabled: true
+      max_degrees: 12.0
     masking:
-      enabled: false
-      prob: 0.0
+      enabled: true
+      prob: 0.08
     noise:
-      enabled: false
-      std: 0.0
+      enabled: true
+      std: 0.08
     intensity:
-      enabled: false
-      min_scale: 1.0
-      max_scale: 1.0
+      enabled: true
+      min_scale: 0.85
+      max_scale: 1.15
     clamp_min: 0.0
     clamp_max: 1.0
 
 output:
-  checkpoint_path: ./artifacts/3_regularized_covnet.pt
-  analysis_path: ./artifacts/3_regularized_covnet_analysis.txt
+  checkpoint_path: ./artifacts/4_self_supervised_covnet_aug30.pt
+  analysis_path: ./artifacts/4_self_supervised_covnet_aug30_analysis.txt
 
 analysis:
   k: 5

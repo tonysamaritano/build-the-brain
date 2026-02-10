@@ -5,7 +5,7 @@ experiment:
 data:
   dataset: mnist
   data_dir: ./data
-  train_samples: 1000
+  train_samples: 200
   val_samples: 5000
   test_samples: 10000
   num_workers: 0
@@ -41,10 +41,28 @@ regularization:
   dropout:
     enabled: false
     p: 0.0
-  denoising:
-    enabled: false
-    gaussian_std: 0.0
-    masking_prob: 0.0
-    apply_in_eval: false
+
+self_supervised:
+  enabled: false
+  precompute: true
+  augmentations_per_sample: 1
+  cache_path: ""
+  augmentations:
+    translation:
+      enabled: false
+      max_shift: 0
+    rotation:
+      enabled: false
+      max_degrees: 0.0
+    masking:
+      enabled: false
+      prob: 0.0
+    noise:
+      enabled: false
+      std: 0.0
+    intensity:
+      enabled: false
+      min_scale: 1.0
+      max_scale: 1.0
     clamp_min: 0.0
     clamp_max: 1.0
