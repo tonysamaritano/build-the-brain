@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader, Subset
 from tqdm.auto import tqdm
 
 from autoencoder_common import (
-    VanillaAutoencoder,
+    build_model_from_config,
     build_mnist_splits,
     resolve_device,
     resolve_num_workers,
@@ -27,15 +27,8 @@ def load_config(path: str) -> dict[str, Any]:
     return cfg
 
 
-def load_model(cfg: dict[str, Any], checkpoint_path: str, device: torch.device) -> VanillaAutoencoder:
-    model_cfg = cfg["model"]
-    model = VanillaAutoencoder(
-        input_dim=int(model_cfg["input_dim"]),
-        hidden_dims=[int(v) for v in model_cfg["hidden_dims"]],
-        latent_dim=int(model_cfg["latent_dim"]),
-        activation_name=str(model_cfg["activation"]).lower(),
-    ).to(device)
-
+def load_model(cfg: dict[str, Any], checkpoint_path: str, device: torch.device) -> torch.nn.Module:
+    model = build_model_from_config(cfg).to(device)
     checkpoint = torch.load(checkpoint_path, map_location=device)
     model.load_state_dict(checkpoint["state_dict"])
     model.eval()
@@ -43,7 +36,7 @@ def load_model(cfg: dict[str, Any], checkpoint_path: str, device: torch.device) 
 
 
 def encode_dataset(
-    model: VanillaAutoencoder,
+    model: torch.nn.Module,
     dataset: Subset,
     batch_size: int,
     num_workers: int,
@@ -64,8 +57,7 @@ def encode_dataset(
     with torch.no_grad():
         for images, labels in tqdm(loader, desc=f"encode {split_name}", leave=False):
             images = images.to(device)
-            flat = images.view(images.size(0), -1)
-            latents = model.encoder(flat).cpu().numpy()
+            latents = model.encode(images).cpu().numpy()
             all_latents.append(latents)
             all_labels.append(labels.numpy())
 
@@ -94,6 +86,9 @@ def main() -> None:
 
     splits = build_mnist_splits(cfg)
     model = load_model(cfg, checkpoint_path, device)
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Parameters: total={total_params:,} trainable={trainable_params:,}")
 
     batch_size = int(cfg["training"]["batch_size"])
     requested_num_workers = int(cfg["data"]["num_workers"])
@@ -125,6 +120,8 @@ def main() -> None:
     with open(analysis_path, "w", encoding="utf-8") as f:
         f.write(f"experiment: {experiment_name}\n")
         f.write(f"checkpoint: {checkpoint_path}\n")
+        f.write(f"parameters_total: {total_params}\n")
+        f.write(f"parameters_trainable: {trainable_params}\n")
         f.write(f"kNN latent-space test accuracy: {acc:.4f}\n\n")
         f.write(report)
     print(f"Saved analysis to {analysis_path}")

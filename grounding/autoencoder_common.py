@@ -62,6 +62,122 @@ class VanillaAutoencoder(nn.Module):
         z = self.encoder(x)
         return self.decoder(z)
 
+    def encode(self, x: torch.Tensor) -> torch.Tensor:
+        x = x.view(x.size(0), -1)
+        return self.encoder(x)
+
+
+class NaiveConvAutoencoder(nn.Module):
+    def __init__(
+        self,
+        input_channels: int,
+        input_size: int,
+        hidden_dims: list[int],
+        latent_dim: int,
+        activation_name: str,
+        kernel_size: int,
+        stride: int,
+        padding: int,
+        output_padding: int,
+    ) -> None:
+        super().__init__()
+        if not hidden_dims:
+            raise ValueError("model.hidden_dims must contain at least one channel size for naive_conv.")
+
+        activation_map = {
+            "relu": nn.ReLU,
+            "gelu": nn.GELU,
+            "tanh": nn.Tanh,
+        }
+        if activation_name not in activation_map:
+            raise ValueError(
+                f"Unsupported activation '{activation_name}'. "
+                f"Expected one of: {sorted(activation_map)}"
+            )
+        activation = activation_map[activation_name]
+
+        encoder_layers: list[nn.Module] = []
+        in_ch = input_channels
+        for ch in hidden_dims:
+            encoder_layers.append(
+                nn.Conv2d(in_ch, ch, kernel_size=kernel_size, stride=stride, padding=padding)
+            )
+            encoder_layers.append(activation())
+            in_ch = ch
+        self.features = nn.Sequential(*encoder_layers)
+
+        with torch.no_grad():
+            dummy = torch.zeros(1, input_channels, input_size, input_size)
+            feature_map = self.features(dummy)
+        self._feature_shape = feature_map.shape[1:]
+        flat_dim = int(np.prod(self._feature_shape))
+
+        self.to_latent = nn.Linear(flat_dim, latent_dim)
+        self.from_latent = nn.Linear(latent_dim, flat_dim)
+
+        decoder_layers: list[nn.Module] = []
+        decoder_channels = list(reversed(hidden_dims))
+        for i in range(len(decoder_channels) - 1):
+            decoder_layers.append(
+                nn.ConvTranspose2d(
+                    decoder_channels[i],
+                    decoder_channels[i + 1],
+                    kernel_size=kernel_size,
+                    stride=stride,
+                    padding=padding,
+                    output_padding=output_padding,
+                )
+            )
+            decoder_layers.append(activation())
+        decoder_layers.append(
+            nn.ConvTranspose2d(
+                decoder_channels[-1],
+                input_channels,
+                kernel_size=kernel_size,
+                stride=stride,
+                padding=padding,
+                output_padding=output_padding,
+            )
+        )
+        decoder_layers.append(nn.Sigmoid())
+        self.decoder = nn.Sequential(*decoder_layers)
+
+    def encode(self, x: torch.Tensor) -> torch.Tensor:
+        h = self.features(x)
+        h = h.view(h.size(0), -1)
+        return self.to_latent(h)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        z = self.encode(x)
+        h = self.from_latent(z)
+        h = h.view(h.size(0), *self._feature_shape)
+        return self.decoder(h)
+
+
+def build_model_from_config(cfg: dict[str, Any]) -> nn.Module:
+    model_cfg = cfg["model"]
+    architecture = str(model_cfg.get("architecture", "vanilla_fc")).lower()
+    if architecture == "naive_conv":
+        return NaiveConvAutoencoder(
+            input_channels=int(model_cfg.get("input_channels", 1)),
+            input_size=int(model_cfg.get("input_size", 28)),
+            hidden_dims=[int(v) for v in model_cfg["hidden_dims"]],
+            latent_dim=int(model_cfg["latent_dim"]),
+            activation_name=str(model_cfg.get("activation", "relu")).lower(),
+            kernel_size=int(model_cfg.get("kernel_size", 3)),
+            stride=int(model_cfg.get("stride", 2)),
+            padding=int(model_cfg.get("padding", 1)),
+            output_padding=int(model_cfg.get("output_padding", 1)),
+        )
+    if architecture == "vanilla_fc":
+        return VanillaAutoencoder(
+            input_dim=int(model_cfg["input_dim"]),
+            hidden_dims=[int(v) for v in model_cfg["hidden_dims"]],
+            latent_dim=int(model_cfg["latent_dim"]),
+            activation_name=str(model_cfg["activation"]).lower(),
+        )
+    raise ValueError(f"Unsupported model.architecture='{architecture}'")
+
 
 def set_seed(seed: int) -> None:
     random.seed(seed)

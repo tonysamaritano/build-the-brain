@@ -1,0 +1,38 @@
+experiment:
+  name: naive_covnet_autoencoder
+  seed: 42
+
+data:
+  dataset: mnist
+  data_dir: ./data
+  train_samples: 100
+  val_samples: 5000
+  test_samples: 10000
+  num_workers: 0
+
+model:
+  architecture: naive_conv
+  input_channels: 1
+  input_size: 28
+  hidden_dims: [8, 16]
+  latent_dim: 32
+  activation: relu
+  kernel_size: 3
+  stride: 2
+  padding: 1
+  output_padding: 1
+
+training:
+  batch_size: 128
+  epochs: 15
+  learning_rate: 0.001
+  weight_decay: 0.0
+  device: auto
+
+output:
+  checkpoint_path: ./artifacts/1_naive_covnet_autoencoder.pt
+  analysis_path: ./artifacts/1_naive_covnet_autoencoder_analysis.txt
+
+analysis:
+  k: 5
+  metric: euclidean
