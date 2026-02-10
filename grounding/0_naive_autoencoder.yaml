@@ -1,0 +1,32 @@
+experiment:
+  name: naive_autoencoder
+  seed: 42
+
+data:
+  dataset: mnist
+  data_dir: ./data
+  train_samples: 55000
+  val_samples: 5000
+  test_samples: 10000
+  num_workers: 0
+
+model:
+  input_dim: 784
+  hidden_dims: [256, 128]
+  latent_dim: 32
+  activation: relu
+
+training:
+  batch_size: 128
+  epochs: 15
+  learning_rate: 0.001
+  weight_decay: 0.0
+  device: auto
+
+output:
+  checkpoint_path: ./artifacts/0_naive_autoencoder.pt
+  analysis_path: ./artifacts/0_naive_autoencoder_analysis.txt
+
+analysis:
+  k: 5
+  metric: euclidean
