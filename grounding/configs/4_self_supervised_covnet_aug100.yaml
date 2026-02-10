@@ -61,7 +61,8 @@ self_supervised:
     clamp_max: 1.0
 
 output:
-  checkpoint_path: ./artifacts/4_self_supervised_covnet_aug100.pt
+  checkpoint_path: ./artifacts/4_self_supervised_covnet_aug100_final.pt
+  save_every_n_epochs: 5
   analysis_path: ./artifacts/4_self_supervised_covnet_aug100_analysis.txt
 
 analysis:

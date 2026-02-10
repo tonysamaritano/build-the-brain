@@ -61,7 +61,8 @@ self_supervised:
     clamp_max: 1.0
 
 output:
-  checkpoint_path: ./artifacts/3_regularized_covnet.pt
+  checkpoint_path: ./artifacts/3_regularized_covnet_final.pt
+  save_every_n_epochs: 5
   analysis_path: ./artifacts/3_regularized_covnet_analysis.txt
 
 analysis:

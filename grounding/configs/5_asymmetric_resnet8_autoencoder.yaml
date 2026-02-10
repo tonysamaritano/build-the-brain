@@ -65,7 +65,8 @@ self_supervised:
     clamp_max: 1.0
 
 output:
-  checkpoint_path: ./artifacts/5_asymmetric_resnet8_autoencoder.pt
+  checkpoint_path: ./artifacts/5_asymmetric_resnet8_autoencoder_final.pt
+  save_every_n_epochs: 5
   analysis_path: ./artifacts/5_asymmetric_resnet8_autoencoder_analysis.txt
 
 analysis:

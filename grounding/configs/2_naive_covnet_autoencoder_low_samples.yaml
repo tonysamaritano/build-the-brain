@@ -30,7 +30,8 @@ training:
   device: auto
 
 output:
-  checkpoint_path: ./artifacts/2_naive_covnet_autoencoder_low_samples.pt
+  checkpoint_path: ./artifacts/2_naive_covnet_autoencoder_low_samples_final.pt
+  save_every_n_epochs: 5
   analysis_path: ./artifacts/2_naive_covnet_autoencoder_low_samples_analysis.txt
 
 analysis:

@@ -96,8 +96,11 @@ def main() -> None:
 
     epochs = int(cfg["training"]["epochs"])
     output_cfg = cfg["output"]
+    save_every_n_epochs = max(1, int(output_cfg.get("save_every_n_epochs", 1)))
     ckpt_path = Path(output_cfg["checkpoint_path"])
     ckpt_path.parent.mkdir(parents=True, exist_ok=True)
+    last_train_loss = float("nan")
+    last_val_loss = float("nan")
 
     for epoch in tqdm(range(1, epochs + 1), desc="epochs"):
         model.train()
@@ -119,23 +122,35 @@ def main() -> None:
 
         train_loss = running / max(total, 1)
         val_loss = evaluate(model, val_loader, device, criterion)
+        last_train_loss = train_loss
+        last_val_loss = val_loss
 
         print(
             f"epoch={epoch:03d} train_loss={train_loss:.6f} val_loss={val_loss:.6f}",
             flush=True,
         )
 
-        epoch_ckpt_path = ckpt_path.with_name(f"{ckpt_path.stem}_epoch{epoch:03d}{ckpt_path.suffix}")
-        payload = {
-            "state_dict": model.state_dict(),
-            "config": cfg,
-            "epoch": epoch,
-            "train_loss": train_loss,
-            "val_loss": val_loss,
-        }
-        torch.save(payload, epoch_ckpt_path)
-        torch.save(payload, ckpt_path)
-        print(f"Saved checkpoint: {epoch_ckpt_path}")
+        if epoch % save_every_n_epochs == 0:
+            epoch_ckpt_path = ckpt_path.with_name(f"{ckpt_path.stem}_epoch{epoch:03d}{ckpt_path.suffix}")
+            payload = {
+                "state_dict": model.state_dict(),
+                "config": cfg,
+                "epoch": epoch,
+                "train_loss": train_loss,
+                "val_loss": val_loss,
+            }
+            torch.save(payload, epoch_ckpt_path)
+            print(f"Saved periodic checkpoint: {epoch_ckpt_path}")
+
+    final_payload = {
+        "state_dict": model.state_dict(),
+        "config": cfg,
+        "epoch": epochs,
+        "train_loss": last_train_loss,
+        "val_loss": last_val_loss,
+    }
+    torch.save(final_payload, ckpt_path)
+    print(f"Saved final checkpoint: {ckpt_path}")
 
 
 if __name__ == "__main__":

@@ -136,6 +136,7 @@ python -m http.server 8000
 
 ## Notes
 
-- Checkpoints are saved at `output.checkpoint_path` when validation improves (best model, not just final epoch).
+- `output.save_every_n_epochs` controls periodic epoch checkpoints (`..._epochXXX.pt`).
+- `output.checkpoint_path` is always the final epoch model and is the default checkpoint used by analysis scripts.
 - `num_workers` is automatically forced to `0` if `torch_shm_manager` is not executable in your environment.
 - If a checkpoint path is omitted for analysis scripts, they use `output.checkpoint_path` from config.
