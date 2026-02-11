@@ -5,7 +5,7 @@ experiment:
 data:
   dataset: mnist
   data_dir: ./data
-  train_samples: 200
+  train_samples: 100
   val_samples: 5000
   test_samples: 10000
   num_workers: 0

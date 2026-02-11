@@ -197,7 +197,6 @@ python -m http.server 8000
 
 Open:
 - `http://localhost:8000/grounding/interactive_latent_playground.html?assets=/artifacts/asymmetric_resnet8_autoencoder_test_interactive_assets.json&encoder=/artifacts/asymmetric_resnet8_autoencoder_encoder.onnx&decoder=/artifacts/asymmetric_resnet8_autoencoder_decoder.onnx`
-- `http://localhost:8000/grounding/interactive_latent_playground.html?assets=/artifacts/regularized_covnet_test_interactive_assets.json&encoder=/artifacts/regularized_covnet_encoder.onnx&decoder=/artifacts/regularized_covnet_decoder.onnx`
 
 ## Notes
 
