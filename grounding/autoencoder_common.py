@@ -73,6 +73,9 @@ class VanillaAutoencoder(nn.Module):
         x = x.view(x.size(0), -1)
         return self.encoder(x)
 
+    def decode(self, z: torch.Tensor) -> torch.Tensor:
+        return self.decoder(z)
+
 
 class NaiveConvAutoencoder(nn.Module):
     def __init__(
@@ -161,6 +164,9 @@ class NaiveConvAutoencoder(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         z = self.encode(x)
+        return self.decode(z)
+
+    def decode(self, z: torch.Tensor) -> torch.Tensor:
         h = self.from_latent(z)
         h = h.view(h.size(0), *self._feature_shape)
         return self.decoder(h)
@@ -413,6 +419,9 @@ class AsymmetricResNetAutoencoder(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         z = self.encode(x)
+        return self.decode(z)
+
+    def decode(self, z: torch.Tensor) -> torch.Tensor:
         h = self.from_latent(z)
         h = h.view(h.size(0), *self._feature_shape)
         return self.decoder(h)

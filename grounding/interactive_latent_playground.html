@@ -1,0 +1,849 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Interactive Latent Playground</title>
+  <style>
+    :root {
+      --bg: #0a1117;
+      --panel: rgba(15, 26, 35, 0.9);
+      --text: #d8e5ef;
+      --muted: #8fa8bb;
+      --accent: #71e6c8;
+    }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: "IBM Plex Sans", "Segoe UI", sans-serif; }
+    #root { display: grid; grid-template-columns: 380px 1fr; height: 100%; }
+    #controls {
+      padding: 14px;
+      border-right: 1px solid rgba(255,255,255,0.08);
+      background: linear-gradient(180deg, rgba(20,30,40,0.95), rgba(12,19,26,0.95));
+      overflow: auto;
+    }
+    #viewer { position: relative; }
+    #app { position: absolute; inset: 0; }
+    .card {
+      background: var(--panel);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 10px;
+      padding: 10px;
+      margin-bottom: 10px;
+    }
+    .title { font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 8px; letter-spacing: 0.02em; }
+    .row { margin-bottom: 8px; }
+    .row label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+    .row input[type="range"], .row select { width: 100%; }
+    .mono { font-family: "IBM Plex Mono", Menlo, monospace; font-size: 12px; }
+    .digits { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+    .digit-btn {
+      background: #152635;
+      border: 1px solid rgba(255,255,255,0.1);
+      color: var(--text);
+      border-radius: 6px;
+      height: 32px;
+      cursor: pointer;
+    }
+    .digit-btn.active { border-color: var(--accent); color: var(--accent); }
+    .action-btn {
+      background: #163344;
+      border: 1px solid rgba(255,255,255,0.15);
+      color: var(--text);
+      border-radius: 6px;
+      height: 32px;
+      padding: 0 10px;
+      cursor: pointer;
+      margin-right: 6px;
+      margin-bottom: 6px;
+    }
+    .row.inline { display: flex; align-items: center; gap: 8px; }
+    .draw-wrap { display: grid; gap: 8px; }
+    #drawCanvas {
+      width: 100%;
+      max-width: 280px;
+      aspect-ratio: 1;
+      image-rendering: pixelated;
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 8px;
+      background: black;
+      touch-action: none;
+      cursor: crosshair;
+    }
+    .canvases { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+    canvas.thumb { width: 100%; aspect-ratio: 1; image-rendering: pixelated; border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; background: black; }
+    @media (max-width: 980px) {
+      #root { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+      #controls { border-right: 0; border-bottom: 1px solid rgba(255,255,255,0.08); }
+      #viewer { min-height: 52vh; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root">
+    <div id="controls">
+      <div class="card">
+        <div class="title">Model</div>
+        <div id="status" class="mono">loading...</div>
+      </div>
+
+      <div class="card">
+        <div class="title">Mode</div>
+        <div class="row">
+          <label for="mode">Interaction mode</label>
+          <select id="mode">
+            <option value="probe">Probe (augment sample)</option>
+            <option value="interpolate">Interpolate (two-click latent path)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="title">Digit</div>
+        <div id="digitButtons" class="digits"></div>
+      </div>
+
+      <div class="card">
+        <div class="title">Input Source</div>
+        <div class="row inline">
+          <input id="useCustom" type="checkbox">
+          <label for="useCustom">Use custom drawing instead of digit sample</label>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="title">Transforms</div>
+        <div class="row"><label>Rotation (deg): <span id="rotationVal"></span></label><input id="rotation" type="range" min="-20" max="20" step="1" value="0"></div>
+        <div class="row"><label>Scale: <span id="scaleVal"></span></label><input id="scale" type="range" min="0.7" max="1.3" step="0.01" value="1"></div>
+        <div class="row"><label>Translate X (px): <span id="txVal"></span></label><input id="tx" type="range" min="-4" max="4" step="1" value="0"></div>
+        <div class="row"><label>Translate Y (px): <span id="tyVal"></span></label><input id="ty" type="range" min="-4" max="4" step="1" value="0"></div>
+        <div class="row"><label>Intensity: <span id="intensityVal"></span></label><input id="intensity" type="range" min="0.6" max="1.4" step="0.01" value="1"></div>
+        <div class="row"><label>Noise std: <span id="noiseVal"></span></label><input id="noise" type="range" min="0" max="0.2" step="0.005" value="0"></div>
+        <div class="row"><label>Mask prob: <span id="maskVal"></span></label><input id="mask" type="range" min="0" max="0.3" step="0.01" value="0"></div>
+        <button id="resetAugmentations" class="action-btn">Reset augmentations</button>
+      </div>
+
+      <div class="card">
+        <div class="title">Custom Drawing</div>
+        <div class="draw-wrap">
+          <canvas id="drawCanvas" width="280" height="280"></canvas>
+          <button id="clearDrawing" class="action-btn">Clear drawing</button>
+          <div class="mono">Draw in white on black (mapped to 28x28).</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="title">Interpolation</div>
+        <div class="mono">In interpolate mode, click one manifold point for start and a second point for end.</div>
+        <div class="mono">The moving marker is regrounded with D(E(D(z_t))).</div>
+        <div class="row"><label>Path position t: <span id="interpTVal"></span></label><input id="interpT" type="range" min="0" max="1" step="0.01" value="0"></div>
+        <button id="playInterp" class="action-btn">Play</button>
+        <button id="clearInterp" class="action-btn">Clear points</button>
+        <div id="interpInfo" class="mono">start: -, end: -</div>
+      </div>
+
+      <div class="card">
+        <div class="title">Preview</div>
+        <div class="canvases">
+          <div>
+            <div class="mono">base</div>
+            <canvas id="baseCanvas" class="thumb" width="28" height="28"></canvas>
+          </div>
+          <div>
+            <div class="mono">augmented</div>
+            <canvas id="augCanvas" class="thumb" width="28" height="28"></canvas>
+          </div>
+          <div>
+            <div class="mono">decoded</div>
+            <canvas id="decodedCanvas" class="thumb" width="28" height="28"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="title">Projection</div>
+        <div id="projectionText" class="mono">waiting...</div>
+      </div>
+    </div>
+    <div id="viewer">
+      <div id="app"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.167.1/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.167.1/examples/jsm/"
+      }
+    }
+  </script>
+  <script type="module">
+    import * as THREE from "three";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+    const params = new URLSearchParams(window.location.search);
+    const assetsPath = params.get("assets") || "/artifacts/asymmetric_resnet8_autoencoder_test_interactive_assets.json";
+    const encoderPath = params.get("encoder") || params.get("onnx") || "/artifacts/asymmetric_resnet8_autoencoder_encoder.onnx";
+    const decoderPath = params.get("decoder") || "/artifacts/asymmetric_resnet8_autoencoder_decoder.onnx";
+
+    const statusEl = document.getElementById("status");
+    const projEl = document.getElementById("projectionText");
+    const digitButtonsEl = document.getElementById("digitButtons");
+    const modeEl = document.getElementById("mode");
+    const useCustomEl = document.getElementById("useCustom");
+    const resetAugEl = document.getElementById("resetAugmentations");
+    const clearDrawingEl = document.getElementById("clearDrawing");
+    const interpTEl = document.getElementById("interpT");
+    const interpTValEl = document.getElementById("interpTVal");
+    const playInterpEl = document.getElementById("playInterp");
+    const clearInterpEl = document.getElementById("clearInterp");
+    const interpInfoEl = document.getElementById("interpInfo");
+    const drawCanvas = document.getElementById("drawCanvas");
+    const drawCtx = drawCanvas.getContext("2d", { willReadFrequently: true });
+
+    const baseCanvas = document.getElementById("baseCanvas");
+    const augCanvas = document.getElementById("augCanvas");
+    const decodedCanvas = document.getElementById("decodedCanvas");
+    const baseCtx = baseCanvas.getContext("2d", { willReadFrequently: true });
+    const augCtx = augCanvas.getContext("2d", { willReadFrequently: true });
+    const decodedCtx = decodedCanvas.getContext("2d", { willReadFrequently: true });
+    baseCtx.imageSmoothingEnabled = false;
+    augCtx.imageSmoothingEnabled = false;
+    decodedCtx.imageSmoothingEnabled = false;
+
+    const hiddenBase = document.createElement("canvas");
+    hiddenBase.width = 28;
+    hiddenBase.height = 28;
+    const hiddenBaseCtx = hiddenBase.getContext("2d", { willReadFrequently: true });
+    hiddenBaseCtx.imageSmoothingEnabled = false;
+
+    const hiddenGeom = document.createElement("canvas");
+    hiddenGeom.width = 28;
+    hiddenGeom.height = 28;
+    const hiddenGeomCtx = hiddenGeom.getContext("2d", { willReadFrequently: true });
+    hiddenGeomCtx.imageSmoothingEnabled = false;
+
+    const state = {
+      assets: null,
+      encoderSession: null,
+      decoderSession: null,
+      encoderInputName: null,
+      encoderOutputName: null,
+      decoderInputName: null,
+      decoderOutputName: null,
+      selectedDigit: 0,
+      useCustom: false,
+      customPixels: new Float32Array(28 * 28),
+      drawingActive: false,
+      mode: "probe",
+      displayCenter: [0, 0, 0],
+      displayScale: 1,
+      refPointsDisplay: null,
+      refLatentsRaw: null,
+      refLatentsProjection: null,
+      scene: null,
+      camera: null,
+      renderer: null,
+      referencePointCloud: null,
+      probeMarker: null,
+      interpMarker: null,
+      interpLine: null,
+      raycaster: new THREE.Raycaster(),
+      mouse: new THREE.Vector2(),
+      interpStartIdx: null,
+      interpEndIdx: null,
+      interpLatentsRaw: [],
+      interpProjectedPoints: [],
+      playRaf: null,
+    };
+
+    const defaultAugValues = {
+      rotation: "0",
+      scale: "1",
+      tx: "0",
+      ty: "0",
+      intensity: "1",
+      noise: "0",
+      mask: "0",
+    };
+
+    const controlsConfig = [
+      ["rotation", "rotationVal"],
+      ["scale", "scaleVal"],
+      ["tx", "txVal"],
+      ["ty", "tyVal"],
+      ["intensity", "intensityVal"],
+      ["noise", "noiseVal"],
+      ["mask", "maskVal"],
+    ];
+
+    function clamp01(v) {
+      return Math.max(0, Math.min(1, v));
+    }
+
+    function digitColor(digit) {
+      const palette = ["#e85d75","#f08a5d","#f9c74f","#90be6d","#43aa8b","#4d908e","#577590","#277da1","#9b5de5","#f15bb5"];
+      return new THREE.Color(palette[digit % palette.length]);
+    }
+
+    function setLabelValues() {
+      for (const [id, valueId] of controlsConfig) {
+        const el = document.getElementById(id);
+        document.getElementById(valueId).textContent = Number(el.value).toFixed(id === "scale" || id === "intensity" || id === "noise" || id === "mask" ? 2 : 0);
+      }
+      interpTValEl.textContent = Number(interpTEl.value).toFixed(2);
+    }
+
+    function renderPixelsToCanvas(ctx, pixels) {
+      const image = ctx.createImageData(28, 28);
+      for (let i = 0; i < 28 * 28; i++) {
+        const v = Math.round(clamp01(pixels[i]) * 255);
+        const j = i * 4;
+        image.data[j + 0] = v;
+        image.data[j + 1] = v;
+        image.data[j + 2] = v;
+        image.data[j + 3] = 255;
+      }
+      ctx.putImageData(image, 0, 0);
+    }
+
+    function readCanvasPixels(ctx) {
+      const img = ctx.getImageData(0, 0, 28, 28).data;
+      const out = new Float32Array(28 * 28);
+      for (let i = 0; i < out.length; i++) out[i] = img[i * 4] / 255;
+      return out;
+    }
+
+    function gaussianRandom() {
+      let u = 0;
+      let v = 0;
+      while (u === 0) u = Math.random();
+      while (v === 0) v = Math.random();
+      return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+    }
+
+    function getBasePixels() {
+      if (state.useCustom) return state.customPixels;
+      return state.assets.digit_samples[state.selectedDigit];
+    }
+
+    function augmentCurrentInput() {
+      const basePixels = getBasePixels();
+      renderPixelsToCanvas(hiddenBaseCtx, basePixels);
+      renderPixelsToCanvas(baseCtx, basePixels);
+
+      const rotation = Number(document.getElementById("rotation").value) * Math.PI / 180;
+      const scale = Number(document.getElementById("scale").value);
+      const tx = Number(document.getElementById("tx").value);
+      const ty = Number(document.getElementById("ty").value);
+      const intensity = Number(document.getElementById("intensity").value);
+      const noise = Number(document.getElementById("noise").value);
+      const maskProb = Number(document.getElementById("mask").value);
+
+      hiddenGeomCtx.save();
+      hiddenGeomCtx.clearRect(0, 0, 28, 28);
+      hiddenGeomCtx.fillStyle = "black";
+      hiddenGeomCtx.fillRect(0, 0, 28, 28);
+      hiddenGeomCtx.translate(14 + tx, 14 + ty);
+      hiddenGeomCtx.rotate(rotation);
+      hiddenGeomCtx.scale(scale, scale);
+      hiddenGeomCtx.drawImage(hiddenBase, -14, -14);
+      hiddenGeomCtx.restore();
+
+      const augmented = readCanvasPixels(hiddenGeomCtx);
+      for (let i = 0; i < augmented.length; i++) {
+        let v = augmented[i] * intensity;
+        if (noise > 0) v += noise * gaussianRandom();
+        if (maskProb > 0 && Math.random() < maskProb) v = 0;
+        augmented[i] = clamp01(v);
+      }
+      renderPixelsToCanvas(augCtx, augmented);
+      return augmented;
+    }
+
+    function renderDrawCanvas() {
+      const image = drawCtx.createImageData(28, 28);
+      for (let i = 0; i < 28 * 28; i++) {
+        const v = Math.round(clamp01(state.customPixels[i]) * 255);
+        const j = i * 4;
+        image.data[j + 0] = v;
+        image.data[j + 1] = v;
+        image.data[j + 2] = v;
+        image.data[j + 3] = 255;
+      }
+      hiddenBaseCtx.putImageData(image, 0, 0);
+      drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+      drawCtx.imageSmoothingEnabled = false;
+      drawCtx.drawImage(hiddenBase, 0, 0, drawCanvas.width, drawCanvas.height);
+    }
+
+    function drawAtPointer(clientX, clientY) {
+      const rect = drawCanvas.getBoundingClientRect();
+      const x = ((clientX - rect.left) / rect.width) * 28;
+      const y = ((clientY - rect.top) / rect.height) * 28;
+      const radius = 1.6;
+      for (let py = 0; py < 28; py++) {
+        for (let px = 0; px < 28; px++) {
+          const dx = px + 0.5 - x;
+          const dy = py + 0.5 - y;
+          const d = Math.hypot(dx, dy);
+          if (d <= radius) {
+            const idx = py * 28 + px;
+            const strength = 1 - d / radius;
+            state.customPixels[idx] = Math.max(state.customPixels[idx], strength);
+          }
+        }
+      }
+      renderDrawCanvas();
+    }
+
+    function resetAugmentations() {
+      for (const [key, value] of Object.entries(defaultAugValues)) {
+        document.getElementById(key).value = value;
+      }
+      setLabelValues();
+    }
+
+    function l2Normalize(vec) {
+      let sum = 0;
+      for (let i = 0; i < vec.length; i++) sum += vec[i] * vec[i];
+      const n = Math.sqrt(Math.max(sum, 1e-12));
+      const out = new Float32Array(vec.length);
+      for (let i = 0; i < vec.length; i++) out[i] = vec[i] / n;
+      return out;
+    }
+
+    function knnProject(latentRaw) {
+      const z = state.assets.l2_normalized ? l2Normalize(latentRaw) : latentRaw;
+      const refs = state.refLatentsProjection;
+      const pts = state.assets.reference_points;
+      const k = Math.max(1, state.assets.projection_k || 12);
+
+      const best = [];
+      for (let i = 0; i < refs.length; i++) {
+        const r = refs[i];
+        let d = 0;
+        for (let j = 0; j < z.length; j++) {
+          const diff = z[j] - r[j];
+          d += diff * diff;
+        }
+        if (best.length < k) {
+          best.push([d, i]);
+          best.sort((a, b) => a[0] - b[0]);
+        } else if (d < best[best.length - 1][0]) {
+          best[best.length - 1] = [d, i];
+          best.sort((a, b) => a[0] - b[0]);
+        }
+      }
+
+      let wsum = 0;
+      const weights = [];
+      for (const [d] of best) {
+        const w = 1 / (Math.sqrt(d) + 1e-6);
+        weights.push(w);
+        wsum += w;
+      }
+
+      const out = [0, 0, 0];
+      for (let n = 0; n < best.length; n++) {
+        const idx = best[n][1];
+        const w = weights[n] / wsum;
+        out[0] += w * pts[idx][0];
+        out[1] += w * pts[idx][1];
+        out[2] += w * pts[idx][2];
+      }
+      return { point: out, nearestDist: Math.sqrt(best[0][0]) };
+    }
+
+    async function inferLatent(augmentedPixels) {
+      const tensor = new ort.Tensor("float32", new Float32Array(augmentedPixels), [1, 1, 28, 28]);
+      const outputs = await state.encoderSession.run({ [state.encoderInputName]: tensor });
+      return outputs[state.encoderOutputName].data;
+    }
+
+    async function decodeLatent(latentRaw, render = true) {
+      if (!state.decoderSession) return;
+      const latentTensor = new ort.Tensor("float32", new Float32Array(latentRaw), [1, latentRaw.length]);
+      const outputs = await state.decoderSession.run({ [state.decoderInputName]: latentTensor });
+      const out = outputs[state.decoderOutputName];
+      let pixels = null;
+      if (out.data.length === 28 * 28) {
+        pixels = out.data;
+      } else if (out.data.length >= 28 * 28) {
+        pixels = out.data.slice(0, 28 * 28);
+      }
+      if (pixels && render) renderPixelsToCanvas(decodedCtx, pixels);
+      return pixels;
+    }
+
+    function latentL2Distance(a, b) {
+      const n = Math.min(a.length, b.length);
+      let sum = 0;
+      for (let i = 0; i < n; i++) {
+        const d = a[i] - b[i];
+        sum += d * d;
+      }
+      return Math.sqrt(sum);
+    }
+
+    async function regroundLatent(latentRaw) {
+      const firstDecoded = await decodeLatent(latentRaw, false);
+      if (!firstDecoded) {
+        return { latentRegrounded: latentRaw, drift: 0 };
+      }
+      const latentRegrounded = await inferLatent(firstDecoded);
+      await decodeLatent(latentRegrounded, true);
+      return {
+        latentRegrounded,
+        drift: latentL2Distance(latentRaw, latentRegrounded),
+      };
+    }
+
+    function toDisplayPoint(p) {
+      return [
+        (p[0] - state.displayCenter[0]) * state.displayScale,
+        (p[1] - state.displayCenter[1]) * state.displayScale,
+        (p[2] - state.displayCenter[2]) * state.displayScale,
+      ];
+    }
+
+    function setupThree() {
+      const mount = document.getElementById("app");
+      state.scene = new THREE.Scene();
+      state.scene.background = new THREE.Color("#0a1117");
+      state.scene.add(new THREE.AxesHelper(8));
+
+      state.camera = new THREE.PerspectiveCamera(60, mount.clientWidth / mount.clientHeight, 0.01, 1000);
+      state.camera.position.set(0, 0, 28);
+
+      state.renderer = new THREE.WebGLRenderer({ antialias: true });
+      state.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      state.renderer.setSize(mount.clientWidth, mount.clientHeight);
+      mount.appendChild(state.renderer.domElement);
+
+      const controls = new OrbitControls(state.camera, state.renderer.domElement);
+      controls.enableDamping = true;
+
+      const positions = new Float32Array(state.refPointsDisplay.length * 3);
+      const colors = new Float32Array(state.refPointsDisplay.length * 3);
+      for (let i = 0; i < state.refPointsDisplay.length; i++) {
+        const p = state.refPointsDisplay[i];
+        const c = digitColor(state.assets.reference_labels[i]);
+        positions[i * 3 + 0] = p[0];
+        positions[i * 3 + 1] = p[1];
+        positions[i * 3 + 2] = p[2];
+        colors[i * 3 + 0] = c.r;
+        colors[i * 3 + 1] = c.g;
+        colors[i * 3 + 2] = c.b;
+      }
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+      geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+      state.referencePointCloud = new THREE.Points(
+        geometry,
+        new THREE.PointsMaterial({ size: 0.1, vertexColors: true, opacity: 0.85, transparent: true })
+      );
+      state.scene.add(state.referencePointCloud);
+
+      state.probeMarker = new THREE.Mesh(
+        new THREE.SphereGeometry(0.32, 16, 16),
+        new THREE.MeshBasicMaterial({ color: "#ffffff" })
+      );
+      state.scene.add(state.probeMarker);
+
+      state.interpMarker = new THREE.Mesh(
+        new THREE.SphereGeometry(0.34, 16, 16),
+        new THREE.MeshBasicMaterial({ color: "#ffdc73" })
+      );
+      state.scene.add(state.interpMarker);
+
+      state.scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+
+      window.addEventListener("resize", () => {
+        const w = mount.clientWidth;
+        const h = mount.clientHeight;
+        state.camera.aspect = w / h;
+        state.camera.updateProjectionMatrix();
+        state.renderer.setSize(w, h);
+      });
+
+      state.renderer.domElement.addEventListener("click", onViewerClick);
+
+      function animate() {
+        controls.update();
+        state.renderer.render(state.scene, state.camera);
+        requestAnimationFrame(animate);
+      }
+      animate();
+    }
+
+    function prepareDisplayTransform(points) {
+      let cx = 0, cy = 0, cz = 0;
+      for (const p of points) { cx += p[0]; cy += p[1]; cz += p[2]; }
+      cx /= points.length;
+      cy /= points.length;
+      cz /= points.length;
+      state.displayCenter = [cx, cy, cz];
+
+      let maxR = 1;
+      for (const p of points) {
+        const r = Math.hypot(p[0] - cx, p[1] - cy, p[2] - cz);
+        if (r > maxR) maxR = r;
+      }
+      state.displayScale = 12 / maxR;
+      state.refPointsDisplay = points.map((p) => toDisplayPoint(p));
+    }
+
+    function renderDigitButtons() {
+      digitButtonsEl.innerHTML = "";
+      for (let d = 0; d <= 9; d++) {
+        const btn = document.createElement("button");
+        btn.textContent = String(d);
+        btn.className = "digit-btn" + (d === state.selectedDigit ? " active" : "");
+        btn.addEventListener("click", () => {
+          state.selectedDigit = d;
+          renderDigitButtons();
+          if (state.mode === "probe") updateProbeProjection();
+        });
+        digitButtonsEl.appendChild(btn);
+      }
+    }
+
+    async function updateProbeProjection() {
+      try {
+        setLabelValues();
+        const augmented = augmentCurrentInput();
+        const latent = await inferLatent(augmented);
+        const projected = knnProject(latent);
+        const p = toDisplayPoint(projected.point);
+        state.probeMarker.position.set(p[0], p[1], p[2]);
+        await decodeLatent(latent);
+        const sourceLabel = state.useCustom ? "custom" : `digit=${state.selectedDigit}`;
+        projEl.textContent =
+          `${sourceLabel} nearest_latent_dist=${projected.nearestDist.toFixed(4)} ` +
+          `projection=${projected.point.map((v) => v.toFixed(3)).join(", ")}`;
+      } catch (err) {
+        projEl.textContent = `probe failed: ${err.message}`;
+      }
+    }
+
+    function clearInterpolationVisuals() {
+      state.interpLatentsRaw = [];
+      state.interpProjectedPoints = [];
+      state.interpStartIdx = null;
+      state.interpEndIdx = null;
+      if (state.interpLine) {
+        state.scene.remove(state.interpLine);
+        state.interpLine.geometry.dispose();
+        state.interpLine.material.dispose();
+        state.interpLine = null;
+      }
+      interpInfoEl.textContent = "start: -, end: -";
+      projEl.textContent = "interpolation cleared";
+    }
+
+    function buildInterpolationPath(steps = 41) {
+      if (state.interpStartIdx == null || state.interpEndIdx == null) return;
+      const z0 = state.refLatentsRaw[state.interpStartIdx];
+      const z1 = state.refLatentsRaw[state.interpEndIdx];
+
+      const pathRaw = [];
+      const pathProjected = [];
+      for (let i = 0; i < steps; i++) {
+        const t = i / (steps - 1);
+        const z = new Float32Array(z0.length);
+        for (let j = 0; j < z.length; j++) z[j] = (1 - t) * z0[j] + t * z1[j];
+        pathRaw.push(z);
+        pathProjected.push(toDisplayPoint(knnProject(z).point));
+      }
+      state.interpLatentsRaw = pathRaw;
+      state.interpProjectedPoints = pathProjected;
+
+      if (state.interpLine) {
+        state.scene.remove(state.interpLine);
+        state.interpLine.geometry.dispose();
+        state.interpLine.material.dispose();
+      }
+      const geo = new THREE.BufferGeometry().setFromPoints(
+        pathProjected.map((p) => new THREE.Vector3(p[0], p[1], p[2]))
+      );
+      const mat = new THREE.LineBasicMaterial({ color: "#ffdc73" });
+      state.interpLine = new THREE.Line(geo, mat);
+      state.scene.add(state.interpLine);
+
+      interpInfoEl.textContent = `start: #${state.interpStartIdx}, end: #${state.interpEndIdx}`;
+      updateInterpolationAtT(Number(interpTEl.value));
+    }
+
+    async function updateInterpolationAtT(t) {
+      if (!state.interpLatentsRaw.length) return;
+      const idx = Math.max(0, Math.min(state.interpLatentsRaw.length - 1, Math.round(t * (state.interpLatentsRaw.length - 1))));
+      const zInterp = state.interpLatentsRaw[idx];
+      const { latentRegrounded, drift } = await regroundLatent(zInterp);
+      const projRegrounded = knnProject(latentRegrounded);
+      const p = toDisplayPoint(projRegrounded.point);
+      state.interpMarker.position.set(p[0], p[1], p[2]);
+      projEl.textContent =
+        `interpolate t=${t.toFixed(2)} idx=${idx}/${state.interpLatentsRaw.length - 1} ` +
+        `reground=D(E(D(z))) drift=${drift.toFixed(4)} nearest_latent_dist=${projRegrounded.nearestDist.toFixed(4)}`;
+    }
+
+    function onViewerClick(evt) {
+      if (state.mode !== "interpolate") return;
+      const rect = state.renderer.domElement.getBoundingClientRect();
+      state.mouse.x = ((evt.clientX - rect.left) / rect.width) * 2 - 1;
+      state.mouse.y = -((evt.clientY - rect.top) / rect.height) * 2 + 1;
+      state.raycaster.params.Points.threshold = 0.25;
+      state.raycaster.setFromCamera(state.mouse, state.camera);
+      const hits = state.raycaster.intersectObject(state.referencePointCloud);
+      if (!hits.length) return;
+      const idx = hits[0].index;
+
+      if (state.interpStartIdx == null || (state.interpStartIdx != null && state.interpEndIdx != null)) {
+        state.interpStartIdx = idx;
+        state.interpEndIdx = null;
+        state.interpLatentsRaw = [];
+        state.interpProjectedPoints = [];
+        if (state.interpLine) {
+          state.scene.remove(state.interpLine);
+          state.interpLine.geometry.dispose();
+          state.interpLine.material.dispose();
+          state.interpLine = null;
+        }
+        interpInfoEl.textContent = `start: #${state.interpStartIdx}, end: -`;
+        projEl.textContent = "select end point";
+      } else {
+        state.interpEndIdx = idx;
+        buildInterpolationPath();
+      }
+    }
+
+    function syncModeVisuals() {
+      const probe = state.mode === "probe";
+      state.probeMarker.visible = probe;
+      state.interpMarker.visible = !probe;
+      if (state.interpLine) state.interpLine.visible = !probe;
+    }
+
+    function stopInterpolationPlayback() {
+      if (state.playRaf) cancelAnimationFrame(state.playRaf);
+      state.playRaf = null;
+      playInterpEl.textContent = "Play";
+    }
+
+    function playInterpolation() {
+      if (!state.interpLatentsRaw.length) return;
+      if (state.playRaf) {
+        stopInterpolationPlayback();
+        return;
+      }
+      playInterpEl.textContent = "Stop";
+      const t0 = performance.now();
+      const durationMs = 2600;
+      const tick = async (now) => {
+        const t = Math.min(1, (now - t0) / durationMs);
+        interpTEl.value = t.toFixed(2);
+        setLabelValues();
+        await updateInterpolationAtT(t);
+        if (t < 1 && state.playRaf) {
+          state.playRaf = requestAnimationFrame(tick);
+        } else {
+          stopInterpolationPlayback();
+        }
+      };
+      state.playRaf = requestAnimationFrame(tick);
+    }
+
+    async function boot() {
+      statusEl.textContent = "loading assets...";
+      const assetsRes = await fetch(assetsPath);
+      if (!assetsRes.ok) throw new Error(`Failed to load assets: ${assetsPath}`);
+      state.assets = await assetsRes.json();
+      state.refLatentsRaw = (state.assets.reference_latents_raw || state.assets.reference_latents).map((v) => new Float32Array(v));
+      state.refLatentsProjection = state.assets.reference_latents.map((v) => new Float32Array(v));
+
+      statusEl.textContent = "loading ONNX encoder...";
+      state.encoderSession = await ort.InferenceSession.create(encoderPath, { executionProviders: ["wasm"] });
+      state.encoderInputName = state.encoderSession.inputNames[0];
+      state.encoderOutputName = state.encoderSession.outputNames[0];
+
+      statusEl.textContent = "loading ONNX decoder...";
+      state.decoderSession = await ort.InferenceSession.create(decoderPath, { executionProviders: ["wasm"] });
+      state.decoderInputName = state.decoderSession.inputNames[0];
+      state.decoderOutputName = state.decoderSession.outputNames[0];
+
+      prepareDisplayTransform(state.assets.reference_points);
+      setupThree();
+      renderDigitButtons();
+      renderDrawCanvas();
+      resetAugmentations();
+      setLabelValues();
+
+      for (const [id] of controlsConfig) {
+        document.getElementById(id).addEventListener("input", () => {
+          if (state.mode === "probe") updateProbeProjection();
+          else setLabelValues();
+        });
+      }
+      useCustomEl.addEventListener("change", () => {
+        state.useCustom = useCustomEl.checked;
+        if (state.mode === "probe") updateProbeProjection();
+      });
+      resetAugEl.addEventListener("click", () => {
+        resetAugmentations();
+        if (state.mode === "probe") updateProbeProjection();
+      });
+      clearDrawingEl.addEventListener("click", () => {
+        state.customPixels.fill(0);
+        renderDrawCanvas();
+        if (state.useCustom && state.mode === "probe") updateProbeProjection();
+      });
+      drawCanvas.addEventListener("pointerdown", (evt) => {
+        state.drawingActive = true;
+        drawAtPointer(evt.clientX, evt.clientY);
+        if (state.useCustom && state.mode === "probe") updateProbeProjection();
+      });
+      drawCanvas.addEventListener("pointermove", (evt) => {
+        if (!state.drawingActive) return;
+        drawAtPointer(evt.clientX, evt.clientY);
+        if (state.useCustom && state.mode === "probe") updateProbeProjection();
+      });
+      window.addEventListener("pointerup", () => {
+        state.drawingActive = false;
+      });
+
+      modeEl.addEventListener("change", () => {
+        state.mode = modeEl.value;
+        stopInterpolationPlayback();
+        syncModeVisuals();
+        if (state.mode === "probe") updateProbeProjection();
+      });
+
+      interpTEl.addEventListener("input", async () => {
+        setLabelValues();
+        if (state.mode === "interpolate") await updateInterpolationAtT(Number(interpTEl.value));
+      });
+      playInterpEl.addEventListener("click", () => {
+        if (state.mode === "interpolate") playInterpolation();
+      });
+      clearInterpEl.addEventListener("click", () => {
+        stopInterpolationPlayback();
+        clearInterpolationVisuals();
+      });
+
+      statusEl.textContent =
+        `${state.assets.experiment} | points=${state.assets.num_points} | latent_dim=${state.assets.latent_dim} | ` +
+        `assets=${assetsPath} | encoder=${encoderPath} | decoder=${decoderPath}`;
+
+      syncModeVisuals();
+      await updateProbeProjection();
+    }
+
+    boot().catch((err) => {
+      statusEl.textContent = `failed: ${err.message}`;
+      console.error(err);
+    });
+  </script>
+</body>
+</html>

@@ -28,6 +28,10 @@ python -m pip install -e .
 - `grounding/analyze_manifold.py`: manifold quality metrics + combined manifold score
 - `grounding/generate_latent_points.py`: exports latent points JSON for visualization (UMAP 3D)
 - `grounding/latent_space_viewer.html`: Three.js viewer for latent JSON
+- `grounding/export_encoder_onnx.py`: exports encoder-only ONNX model for browser inference
+- `grounding/export_decoder_onnx.py`: exports decoder-only ONNX model for browser-side latent interpolation rendering
+- `grounding/export_interactive_assets.py`: exports UMAP manifold + reference latents + one MNIST sample per digit
+- `grounding/interactive_latent_playground.html`: interactive Three.js + ONNX latent projection demo
 
 ## Config Schema (Common)
 
@@ -134,9 +138,164 @@ python -m http.server 8000
 
 - `http://localhost:8000/grounding/latent_space_viewer.html?data=/artifacts/5_asymmetric_resnet8_autoencoder_test_latent_points.json`
 
+## Interactive Browser Demo (ONNX + UMAP)
+
+This demo lets you pick a digit sample and interactively apply augmentations in-browser:
+- translation
+- rotation
+- scale
+- intensity
+- noise
+- masking
+
+Then it runs:
+1. `sample -> encoder (ONNX in browser)`
+2. `latent -> projection on established UMAP manifold (kNN barycentric projection)`
+3. renders the projected point in 3D with Three.js
+
+### 1) Export encoder ONNX
+
+```bash
+python grounding/export_encoder_onnx.py \
+  --config grounding/configs/5_asymmetric_resnet8_autoencoder.yaml
+```
+
+Default output:
+- `artifacts/<experiment_name>_encoder.onnx`
+
+### 1b) Export decoder ONNX
+
+```bash
+python grounding/export_decoder_onnx.py \
+  --config grounding/configs/5_asymmetric_resnet8_autoencoder.yaml
+```
+
+Default output:
+- `artifacts/<experiment_name>_decoder.onnx`
+
+### 2) Export interactive manifold assets
+
+```bash
+python grounding/export_interactive_assets.py \
+  --config grounding/configs/5_asymmetric_resnet8_autoencoder.yaml \
+  --split test \
+  --max-points 3000 \
+  --l2-normalize \
+  --umap-n-neighbors 30 \
+  --umap-min-dist 0.1 \
+  --projection-k 12
+```
+
+Default output:
+- `artifacts/<experiment_name>_<split>_interactive_assets.json`
+
+### 3) Serve and open
+
+```bash
+python -m http.server 8000
+```
+
+Open:
+- `http://localhost:8000/grounding/interactive_latent_playground.html?assets=/artifacts/asymmetric_resnet8_autoencoder_test_interactive_assets.json&encoder=/artifacts/asymmetric_resnet8_autoencoder_encoder.onnx&decoder=/artifacts/asymmetric_resnet8_autoencoder_decoder.onnx`
+- `http://localhost:8000/grounding/interactive_latent_playground.html?assets=/artifacts/regularized_covnet_test_interactive_assets.json&encoder=/artifacts/regularized_covnet_encoder.onnx&decoder=/artifacts/regularized_covnet_decoder.onnx`
+
 ## Notes
 
 - `output.save_every_n_epochs` controls periodic epoch checkpoints (`..._epochXXX.pt`).
 - `output.checkpoint_path` is always the final epoch model and is the default checkpoint used by analysis scripts.
 - `num_workers` is automatically forced to `0` if `torch_shm_manager` is not executable in your environment.
 - If a checkpoint path is omitted for analysis scripts, they use `output.checkpoint_path` from config.
+
+## Agent Guide: Interactive Visualization Assets
+
+Use this section as a handoff spec for coding agents that need to consume and render the interactive latent-space demo.
+
+### Goal
+
+Given a trained config/checkpoint, produce browser-loadable assets and open:
+
+- `grounding/interactive_latent_playground.html`
+
+with query params pointing to:
+
+- interactive manifold JSON
+- encoder ONNX
+- decoder ONNX
+
+### Required output files
+
+All three are required for full functionality (probe + interpolation mode):
+
+1. `artifacts/<experiment_name>_test_interactive_assets.json`
+2. `artifacts/<experiment_name>_encoder.onnx`
+3. `artifacts/<experiment_name>_decoder.onnx`
+
+### Generate assets (canonical commands)
+
+From repo root:
+
+```bash
+python grounding/export_interactive_assets.py \
+  --config grounding/configs/5_asymmetric_resnet8_autoencoder.yaml \
+  --split test \
+  --max-points 3000 \
+  --l2-normalize \
+  --projection-k 12
+```
+
+```bash
+python grounding/export_encoder_onnx.py \
+  --config grounding/configs/5_asymmetric_resnet8_autoencoder.yaml
+```
+
+```bash
+python grounding/export_decoder_onnx.py \
+  --config grounding/configs/5_asymmetric_resnet8_autoencoder.yaml
+```
+
+If `output.checkpoint_path` does not exist yet, pass `--checkpoint <path-to-existing-pt>` explicitly.
+
+### JSON asset contract
+
+The interactive page expects these keys in `*_interactive_assets.json`:
+
+- `experiment` (string)
+- `num_points` (int)
+- `latent_dim` (int)
+- `l2_normalized` (bool)
+- `projection_k` (int)
+- `reference_points` (`N x 3` float array; UMAP coordinates)
+- `reference_latents` (`N x latent_dim`; latent vectors used for projection distance)
+- `reference_latents_raw` (`N x latent_dim`; raw latent vectors used for interpolation)
+- `reference_labels` (`N` ints; point coloring)
+- `digit_samples` (`10 x 784` float array; one sample per digit)
+
+Do not rename these keys unless the frontend is updated in lockstep.
+
+### Run locally
+
+```bash
+python -m http.server 8000
+```
+
+Open:
+
+- `http://localhost:8000/grounding/interactive_latent_playground.html?assets=/artifacts/asymmetric_resnet8_autoencoder_test_interactive_assets.json&encoder=/artifacts/asymmetric_resnet8_autoencoder_encoder.onnx&decoder=/artifacts/asymmetric_resnet8_autoencoder_decoder.onnx`
+
+### Runtime behavior (for integration/testing)
+
+- `probe` mode:
+  - input sample/custom draw -> augment -> `E(x)` -> project on fixed manifold
+  - decoded preview shows `D(E(x))`
+- `interpolate` mode:
+  - pick two manifold points -> linear latent path `z_t`
+  - regrounded signal is used: `D(E(D(z_t)))`
+  - marker position comes from projecting `E(D(z_t))`
+  - decoded preview shows `D(E(D(z_t)))`
+
+### Integration checklist for agents
+
+1. Verify all 3 artifact files exist before launching page.
+2. Keep `assets`, `encoder`, and `decoder` query params absolute-from-host-root (for example `/artifacts/...`).
+3. If embedding in blog/CMS, prefer iframe to hosted page; if blocked, provide link-out.
+4. Reduce `--max-points` if interaction feels heavy.
